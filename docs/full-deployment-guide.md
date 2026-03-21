@@ -1,308 +1,194 @@
 # 完整部署方案
 
-## 1. 目标架构
+这份文档是整套环境的总览，回答的是：
 
-当前建议部署结构：
+- 这套系统由哪些服务组成
+- 推荐的部署顺序是什么
+- 各服务分别监听哪些端口
+- 详细说明文档应该看哪一份
+
+如果你要真正一步步照着部署，建议同时看：
+
+- [部署前文件准备清单](./file-preparation-checklist.md)
+- [从 Windows 版 Clash / Mihomo 获取配置](./mihomo-from-windows.md)
+- [Cloudflare 临时邮箱完整部署流程](./cloudflare-temp-email-deploy.md)
+- [各服务详细部署流程](./service-deployment-details.md)
+
+## 1. 总体架构
+
+当前推荐架构：
 
 - `mihomo`
-  - 提供服务器侧出海代理
-  - HTTP 代理端口：`127.0.0.1:7890`
-  - 控制器端口：`127.0.0.1:9090`
+  - 服务器侧代理
+  - 负责让 OpenAI、Cloudflare Worker 等请求出海
 - `cloudflare_temp_email`
-  - 提供临时邮箱 API
-  - 通过 Cloudflare Worker + Email Routing 收取验证码邮件
+  - Worker + Email Routing
+  - 负责接收验证码邮件
 - `openai_pool_orchestrator-V6`
-  - 注册、取 Token、前端面板、双平台上传
-  - 监听：`127.0.0.1:18421`
+  - 注册、取 token、前端面板、双平台上传
 - `CLIProxyAPI`
-  - 作为 CPA 管理面板和候选池
-  - 监听：`0.0.0.0:8317`
+  - 在这里作为 CPA 候选池和管理面板
 - `Sub2Api`
   - 作为完整账号池平台
-  - 监听：`0.0.0.0:8080`
+- `Nginx`
+  - 统一对外入口、反代、HTTPS
 
-## 2. 服务器建议配置
+## 2. 推荐部署顺序
 
-当前已验证可跑环境：
+建议按下面顺序部署：
 
-- 系统：`BaiduLinux 3 / RHEL 系`
-- CPU/内存：`2C2G`
-- 磁盘：`40G`
+1. 准备所有文件和账号
+2. 部署 `mihomo`
+3. 部署 `cloudflare_temp_email`
+4. 部署 `openai_pool_orchestrator-V6`
+5. 部署 `CLIProxyAPI`
+6. 部署 `Sub2Api`
+7. 部署 `Nginx`
 
-说明：
+## 3. 推荐端口规划
 
-- `2C2G` 可以跑通当前方案
-- 但建议低并发，`V6` 线程先设为 `1`
-- 如果后续要长期高频注册、自动维护、双池同步，建议升级 `4C4G`
+建议统一：
 
-## 3. 部署前需要准备的文件
+- `mihomo` 代理：`127.0.0.1:7890`
+- `mihomo` 控制器：`127.0.0.1:9090`
+- `V6`：`127.0.0.1:18421`
+- `CLIProxyAPI`：`0.0.0.0:8317`
+- `Sub2Api`：`0.0.0.0:8080`
 
-### 3.1 本地需要准备
+## 4. 每个服务的职责
 
-- 服务器 SSH 私钥
-- Windows 端可用的 Mihomo/Clash 配置
-- Cloudflare 域名与 API Token
-- GitHub 仓库访问权限
+### 4.1 mihomo
 
-### 3.2 建议上传到服务器根目录或部署目录的文件
+作用：
 
-- `config.yaml`
-  - Mihomo 主配置
-- `Country.mmdb`
-  - Mihomo GeoIP 数据
-- `GeoSite.dat`
-  - Mihomo GeoSite 数据
-- `GeoIP.dat`
-  - Mihomo GeoIP 数据
-- `deploy_sub2api.sh`
-  - Sub2Api 部署脚本
-- `deploy_cliproxyapi.sh`
-  - CLIProxyAPI 部署脚本
+- 提供统一 HTTP 代理
+- 让国内服务器访问外部 API
+- 给 V6、Cloudflare Worker API、部分容器下载使用
 
-如果没有完整的 Mihomo 资源文件，通常至少要保证：
+### 4.2 cloudflare_temp_email
 
-- `config.yaml`
-- `Country.mmdb`
+作用：
 
-## 4. Mihomo 部署
+- 动态创建临时邮箱地址
+- 存储收件
+- 给 V6 提供验证码轮询接口
 
-## 4.1 必要文件
+### 4.3 openai_pool_orchestrator-V6
 
-必须具备：
+作用：
 
-- `config.yaml`
-- `Country.mmdb`
-
-可选但推荐：
-
-- `GeoSite.dat`
-- `GeoIP.dat`
-
-## 4.2 关键配置项
-
-Mihomo 至少要确认这些配置：
-
-- `mixed-port` 或 `port`
-- `external-controller`
-- `secret`
-- `proxies`
-- `proxy-groups`
-- `rules`
-
-推荐服务器端关键值：
-
-- `mixed-port: 7890`
-- `external-controller: 127.0.0.1:9090`
-- `allow-lan: false`
-
-## 4.3 当前服务侧使用方式
-
-当前所有需要走代理的服务，统一使用：
-
-- HTTP 代理：`http://127.0.0.1:7890`
-
-包括：
-
-- `openai_pool_orchestrator-V6`
-- `cloudflare_temp_email` 的 Worker API 访问
-- `Sub2Api` 部分出海下载
-
-## 5. Cloudflare 临时邮箱部署
-
-## 5.1 所需条件
-
-- 一个已接入 Cloudflare 的域名
-- Cloudflare API Token
-- Email Routing 已启用
-- Worker 已部署
-
-## 5.2 域名侧要求
-
-例如当前使用：
-
-- 域名：`zxpptt.xyz`
-
-必须完成：
-
-- 域名 NS 切到 Cloudflare
-- Email Routing 激活
-- `Catch-All` 规则启用
-- `Catch-All -> Send to a Worker`
-- Worker 指向 `cloudflare-temp-email-mxh`
-
-## 5.3 关键验证项
-
-要确认这几个环节都通过：
-
-1. Worker API 可访问
-2. `/admin/new_address` 能创建地址
-3. 外部邮件发到 `xxx@yourdomain` 后，Worker 后台能收到
-4. `V6 /api/mail/test` 能成功创建测试邮箱
-
-## 6. V6 面板部署
-
-## 6.1 服务职责
-
-`openai_pool_orchestrator-V6` 负责：
-
-- 注册账号
-- Codex OAuth
-- 本地 token 落盘
+- 自动注册
+- OAuth / Codex token 获取
+- 本地 token 文件保存
 - 上传 CPA
 - 上传 Sub2Api
 - 前端仪表盘
 
-## 6.2 关键配置项
+### 4.4 CLIProxyAPI
 
-V6 主要需要配置：
-
-- 代理地址
-- 邮箱提供商
-- CPA 平台
-- Sub2Api 平台
-- 上传模式
-
-建议配置：
-
-- `proxy`: `http://127.0.0.1:7890`
-- `mail_provider`: `cloudflare_temp_email`
-- `upload_mode`: `decoupled`
-- `auto_sync`: `true`
-
-## 6.3 邮箱配置建议
-
-当前推荐：
-
-- `api_base`: Cloudflare Worker URL
-- `admin_password`: Worker 管理口令
-- `domain`: 你的 Cloudflare 邮箱域名
-
-## 7. CPA 部署
-
-## 7.1 当前采用方案
-
-这里的 CPA 实际采用：
-
-- `CLIProxyAPI`
-
-原因：
-
-- 自带管理页
-- 接口简单
-- 能直接接收 V6 落盘的 token 文件
-
-## 7.2 当前关键信息
-
-当前部署示例：
-
-- 服务端口：`8317`
-- 管理页：`/management.html`
-- 管理密钥：独立保存，不应上传仓库
-
-## 7.3 作用
-
-`CLIProxyAPI` 在当前体系里负责：
+作用：
 
 - 接收 token 文件
-- 作为候选池
-- 给 V6 做 CPA 池容量检测
+- 提供轻量管理面板
+- 作为 CPA 候选池
 
-## 8. Sub2Api 部署
+### 4.5 Sub2Api
 
-## 8.1 当前采用方案
+作用：
 
-采用容器方式部署：
+- 作为完整账号池平台
+- 提供后台、API、统计、账号维护能力
 
-- `postgres:15-alpine`
-- `redis:7-alpine`
-- `weishaw/sub2api:latest`
+## 5. 当前推荐配置方向
 
-原因：
+### 5.1 V6
 
-- 系统原生包版本太旧
-- 容器部署更稳定
+推荐值：
 
-## 8.2 组件结构
+- `proxy = http://127.0.0.1:7890`
+- `mail_provider = cloudflare_temp_email`
+- `auto_sync = true`
+- `upload_mode = decoupled`
 
-- `sub2api-postgres`
-- `sub2api-redis`
-- `sub2api`
+### 5.2 Cloudflare 邮箱域名
 
-## 8.3 关键说明
+推荐：
 
-首次部署后：
+- 使用自己的域名
+- `Catch-All -> Send to a Worker`
 
-- `Sub2Api` 会进入 setup wizard
-- 需要完成数据库、Redis、管理员账号初始化
+### 5.3 服务器资源
 
-在当前环境里，如果容器名解析失败，可以直接改用容器内网 IP。
+已验证可运行：
 
-## 9. 当前推荐访问方式
+- `2C2G`
 
-如果直连端口正常：
+但建议：
 
-- `Sub2Api`: `http://SERVER_IP:8080`
-- `CPA`: `http://SERVER_IP:8317/management.html`
-- `V6`: 通过你自己的前置入口或端口访问
+- `V6` 线程数先设为 `1`
+- 不要一开始开高频自动维护
+- 如果后续长时间高频跑，升级到 `4C4G`
 
-如果某些公网端口受限，建议统一通过 `Nginx` 反代：
+## 6. 详细文档索引
 
-- `/sub2api/` -> `127.0.0.1:8080`
-- `/cpa/` -> `127.0.0.1:8317/management.html`
-- `/pool/` -> `127.0.0.1:18421`
+### 6.1 准备哪些文件
 
-## 10. 当前已验证通过的链路
+看：
 
-- `cloudflare_temp_email` 收件
-- `V6` 注册并获取 token
-- `Sub2Api` 登录与导入
-- `CLIProxyAPI` 手工上传 token
-- `CPA / Sub2Api` 双边已存在账号
+- [部署前文件准备清单](./file-preparation-checklist.md)
 
-## 11. 常见问题
+### 6.2 Windows 如何导出 Mihomo 配置
 
-### 11.1 Sub2Api 前端打开 502
+看：
 
-先排查：
+- [从 Windows 版 Clash / Mihomo 获取配置](./mihomo-from-windows.md)
 
-- 服务是否启动
-- `8080` 是否监听
-- 服务器本机访问 `127.0.0.1:8080` 是否正常
-- 是否用了 `https://IP:8080`
+### 6.3 Cloudflare 临时邮箱如何完整部署
 
-### 11.2 CPA 面板打开 502
+看：
 
-优先确认：
+- [Cloudflare 临时邮箱完整部署流程](./cloudflare-temp-email-deploy.md)
 
-- `8317` 是否监听
-- 本机访问 `127.0.0.1:8317/management.html` 是否正常
-- 如果本机正常而公网不通，优先考虑：
-  - 云安全组
-  - 运营商屏蔽
-  - 改走 `Nginx` 反代
+### 6.4 各服务如何一步步部署
 
-### 11.3 V6 显示开了双平台同传，但实际只进了 Sub2Api
+看：
 
-先查真实配置：
+- [各服务详细部署流程](./service-deployment-details.md)
 
-- `auto_sync` 是否为 `true`
-- `upload_mode` 是否为 `decoupled`
+## 7. 常见问题总览
 
-如果已有 token 文件只带：
+### 7.1 只进 Sub2Api，不进 CPA
 
-- `uploaded_platforms: ["sub2api"]`
+优先检查：
 
-说明这批号当时没有真正走到 CPA 上传，需要补传。
+- `auto_sync` 是否真的为 `true`
+- `upload_mode` 是否真的为 `decoupled`
+- token 文件里是否只有 `uploaded_platforms: ["sub2api"]`
 
-## 12. 推荐的最终稳定形态
+### 7.2 Sub2Api 面板打不开
 
-推荐长期方案：
+先看：
 
-- `Mihomo`
-- `Cloudflare temp email`
+- `8080` 是否在监听
+- `127.0.0.1:8080` 本机访问是否正常
+
+### 7.3 CPA 面板 502
+
+先看：
+
+- `8317` 是否在监听
+- `127.0.0.1:8317/management.html` 本机访问是否正常
+- 是否需要改走 Nginx 反代
+
+## 8. 推荐最终形态
+
+长期推荐保留：
+
+- `mihomo`
+- `cloudflare_temp_email`
 - `V6`
 - `CLIProxyAPI`
 - `Sub2Api`
 - `Nginx`
 
-这样后续维护最顺手，面板也更统一。
+这样后续扩展、迁移、补号、排障都会更顺。

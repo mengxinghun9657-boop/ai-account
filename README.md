@@ -1,25 +1,57 @@
-# AI Account Deployment Notes
+# AI Account Deploy
 
-这份仓库用于保存当前这套环境的完整部署方案、模板文件与操作说明，方便后续复现、迁移与排障。
+这个仓库用于保存当前整套环境的部署说明、模板文件和操作备忘。
 
 当前方案包含：
 
-- `openai_pool_orchestrator-V6`
 - `mihomo`
 - `cloudflare_temp_email`
-- `CLIProxyAPI`（作为 CPA 管理面板/候选池）
+- `openai_pool_orchestrator-V6`
+- `CLIProxyAPI`（这里作为 CPA 管理面板/候选池）
 - `Sub2Api`
+- `Nginx`（推荐补上，解决公网端口访问与 HTTPS）
 
-建议阅读顺序：
+## 阅读顺序
 
-1. [完整部署方案](C:\Users\33838\Desktop\aiaccount\ai-account\docs\full-deployment-guide.md)
-2. [Windows 版 Clash/Mihomo 获取配置说明](C:\Users\33838\Desktop\aiaccount\ai-account\docs\mihomo-from-windows.md)
-3. [Mihomo 配置模板](C:\Users\33838\Desktop\aiaccount\ai-account\templates\mihomo\config.example.yaml)
-4. [V6 同步配置模板](C:\Users\33838\Desktop\aiaccount\ai-account\templates\openai-pool\sync-config.example.json)
-5. [Nginx 反代示例](C:\Users\33838\Desktop\aiaccount\ai-account\templates\nginx\ai-account.conf)
+建议按下面顺序阅读：
 
-注意事项：
+1. [完整总览](./docs/full-deployment-guide.md)
+2. [部署前文件准备清单](./docs/file-preparation-checklist.md)
+3. [从 Windows 版 Clash / Mihomo 获取配置](./docs/mihomo-from-windows.md)
+4. [Cloudflare 临时邮箱完整部署流程](./docs/cloudflare-temp-email-deploy.md)
+5. [各服务详细部署流程](./docs/service-deployment-details.md)
+6. [Mihomo 模板](./templates/mihomo/config.example.yaml)
+7. [V6 同步配置模板](./templates/openai-pool/sync-config.example.json)
+8. [Nginx 反代示例](./templates/nginx/ai-account.conf)
 
-- 本仓库只放模板和说明，不应上传真实密钥、真实 Token、真实代理订阅链接。
-- `mihomo`、`Cloudflare API Token`、`Sub2Api` 管理员密码、`CLIProxyAPI` 管理密钥都属于敏感信息。
-- 如果要把实际配置也放进仓库，建议先脱敏后再提交。
+## 当前架构
+
+- `mihomo`
+  - 代理端口：`127.0.0.1:7890`
+  - 控制器：`127.0.0.1:9090`
+- `cloudflare_temp_email`
+  - Worker + Email Routing 收信
+- `openai_pool_orchestrator-V6`
+  - 面板、注册、取 token、双平台上传
+- `CLIProxyAPI`
+  - CPA 候选池与管理面板
+- `Sub2Api`
+  - 完整账号池平台
+
+## 仓库只放什么
+
+建议只放：
+
+- 教程
+- 模板
+- 脱敏示例
+- 部署脚本模板
+
+不要上传：
+
+- 真实代理节点
+- 真实 Mihomo `secret`
+- 真实 Cloudflare API Token
+- 真实 `Sub2Api` 管理员密码
+- 真实 `CLIProxyAPI` 管理密钥
+- 真实邮箱服务密钥
