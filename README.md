@@ -20,9 +20,12 @@
 3. [从 Windows 版 Clash / Mihomo 获取配置](./docs/mihomo-from-windows.md)
 4. [Cloudflare 临时邮箱完整部署流程](./docs/cloudflare-temp-email-deploy.md)
 5. [各服务详细部署流程](./docs/service-deployment-details.md)
-6. [Mihomo 模板](./templates/mihomo/config.example.yaml)
-7. [V6 同步配置模板](./templates/openai-pool/sync-config.example.json)
-8. [Nginx 反代示例](./templates/nginx/ai-account.conf)
+6. [106.12.60.175 实际运行参数对照表](./docs/server-106.12.60.175-runtime.md)
+7. [Mihomo 模板](./templates/mihomo/config.example.yaml)
+8. [V6 同步配置模板](./templates/openai-pool/sync-config.example.json)
+9. [Nginx 反代示例](./templates/nginx/ai-account.conf)
+10. [CLIProxyAPI 部署脚本模板](./scripts/deploy_cliproxyapi.sh)
+11. [Sub2Api 部署脚本模板](./scripts/deploy_sub2api.sh)
 
 ## 当前架构
 
@@ -46,6 +49,7 @@
 - 模板
 - 脱敏示例
 - 部署脚本模板
+- 实际运行参数对照表（非敏感部分）
 
 不要上传：
 
