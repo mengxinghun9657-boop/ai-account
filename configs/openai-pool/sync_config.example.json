@@ -1,33 +1,56 @@
-{
-  "proxy": "http://127.0.0.1:7890",
-  "mihomo_controller": "http://127.0.0.1:9090",
-  "mihomo_secret": "replace-with-your-mihomo-secret",
-  "mail_provider": "cloudflare_temp_email",
-  "mail_provider_configs": {
-    "cloudflare_temp_email": {
-      "api_base": "https://your-worker.your-subdomain.workers.dev",
-      "admin_password": "replace-with-worker-admin-password",
-      "domain": "example.com"
-    }
-  },
-  "cpa_base_url": "http://127.0.0.1:8317",
-  "cpa_token": "replace-with-cpa-management-token",
+﻿{
   "base_url": "http://127.0.0.1:8080",
-  "email": "admin@example.com",
-  "password": "replace-with-sub2api-password",
+  "bearer_token": "",
+  "account_name": "AutoReg",
   "auto_sync": true,
+  "cpa_base_url": "http://127.0.0.1:8317",
+  "cpa_token": "",
+  "min_candidates": 200,
+  "used_percent_threshold": 95,
+  "auto_maintain": true,
+  "maintain_interval_minutes": 30,
   "upload_mode": "decoupled",
-  "min_candidates": 15,
+  "mail_provider": "cloudflare_temp_email",
+  "mail_config": {
+    "api_base": "https://your-worker.your-subdomain.workers.dev",
+    "admin_password": "your-admin-password",
+    "domain": "mail.example.com"
+  },
   "sub2api_min_candidates": 200,
-  "auto_maintain": false,
-  "sub2api_auto_maintain": false,
+  "sub2api_auto_maintain": true,
   "sub2api_maintain_interval_minutes": 30,
   "sub2api_maintain_actions": {
     "refresh_abnormal_accounts": true,
     "delete_abnormal_accounts": true,
     "dedupe_duplicate_accounts": true
   },
+  "sub2api_proxy_id": 1,
+  "sub2api_group_ids": [2],
+  "sub2api_force_http": true,
+  "sub2api_enable_tls_fingerprint": true,
+  "sub2api_disable_oauth_ws_v2": true,
+  "sub2api_disable_apikey_ws_v2": true,
+  "proxy": "http://127.0.0.1:7890",
+  "auto_register": true,
+  "proxy_pool_enabled": false,
+  "proxy_pool_api_url": "https://zenproxy.top/api/fetch",
+  "proxy_pool_auth_mode": "query",
+  "proxy_pool_api_key": "",
+  "proxy_pool_count": 1,
+  "proxy_pool_country": "US",
+  "mail_providers": ["cloudflare_temp_email"],
+  "mail_provider_configs": {
+    "cloudflare_temp_email": {
+      "api_base": "https://your-worker.your-subdomain.workers.dev",
+      "admin_password": "your-admin-password",
+      "domain": "mail.example.com"
+    }
+  },
+  "mail_strategy": "round_robin",
   "multithread": false,
-  "thread_count": 1,
-  "auto_register": false
+  "thread_count": 3,
+  "mihomo_controller": "http://127.0.0.1:9090",
+  "mihomo_secret": "",
+  "email": "admin@example.com",
+  "password": "your-sub2api-admin-password"
 }

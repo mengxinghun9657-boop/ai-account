@@ -1,0 +1,33 @@
+﻿# Runtime artifacts
+*.log
+*.pid
+*.sqlite
+*.db
+*.tar.gz
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+dist/
+.next/
+.turbo/
+.wrangler/
+
+# Local runtime data
+runtime/
+data/
+tokens/
+state.json
+sync_config.json
+
+# OS / editor
+.DS_Store
+Thumbs.db

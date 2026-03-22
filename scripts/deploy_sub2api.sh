@@ -1,130 +1,77 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
-# Podman deployment template for Sub2Api.
-# Usage:
-#   PUBLIC_IP=1.2.3.4 SUB2API_ADMIN_EMAIL=admin@example.com bash deploy_sub2api.sh
-# Optional environment variables:
-#   ROOT_DIR, PODMAN_NETWORK, SUB2API_PORT, TZ_NAME,
-#   MIHOMO_HTTP_PROXY, SUB2API_ADMIN_EMAIL, PUBLIC_IP
+APP_ROOT="${APP_ROOT:-/opt/ai-account}"
+SUB2API_ROOT="${SUB2API_ROOT:-/opt/sub2api}"
+DATA_DIR="$SUB2API_ROOT/app-data"
+POD_NAME="sub2api-pod"
 
-ROOT_DIR="${ROOT_DIR:-/opt/sub2api}"
-PODMAN_NETWORK="${PODMAN_NETWORK:-sub2api-net}"
-SUB2API_PORT="${SUB2API_PORT:-8080}"
-TZ_NAME="${TZ_NAME:-Asia/Shanghai}"
-MIHOMO_HTTP_PROXY="${MIHOMO_HTTP_PROXY:-http://127.0.0.1:7890}"
-SUB2API_ADMIN_EMAIL="${SUB2API_ADMIN_EMAIL:-admin@example.com}"
-PUBLIC_IP="${PUBLIC_IP:-your.server.ip}"
+mkdir -p "$DATA_DIR" "$SUB2API_ROOT/postgres" "$SUB2API_ROOT/redis"
 
-mkdir -p "${ROOT_DIR}/postgres" "${ROOT_DIR}/redis" "${ROOT_DIR}/app-data"
+PODMAN=${PODMAN:-$(command -v podman)}
+if [[ -z "$PODMAN" ]]; then
+  echo "podman 未安装" >&2
+  exit 1
+fi
 
-postgres_password=$(python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(24))
-PY
-)
+read -r -p "ADMIN_EMAIL [admin@example.com]: " ADMIN_EMAIL
+ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+read -r -p "POSTGRES_PASSWORD [sub2api-postgres-pass]: " POSTGRES_PASSWORD
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sub2api-postgres-pass}
+read -r -p "JWT_SECRET [sub2api-jwt-secret]: " JWT_SECRET
+JWT_SECRET=${JWT_SECRET:-sub2api-jwt-secret}
 
-redis_password=$(python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(24))
-PY
-)
+$PODMAN rm -f sub2api sub2api-postgres sub2api-redis 2>/dev/null || true
+$PODMAN pod rm -f "$POD_NAME" 2>/dev/null || true
+$PODMAN pod create --name "$POD_NAME" -p 8080:8080 >/dev/null
 
-admin_password=$(python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(18))
-PY
-)
-
-jwt_secret=$(python3 - <<'PY'
-import secrets
-print(secrets.token_hex(24))
-PY
-)
-
-totp_key=$(python3 - <<'PY'
-import secrets
-print(secrets.token_hex(32))
-PY
-)
-
-export https_proxy="${MIHOMO_HTTP_PROXY}"
-export http_proxy="${MIHOMO_HTTP_PROXY}"
-export all_proxy="socks5://127.0.0.1:7890"
-
-podman network exists "${PODMAN_NETWORK}" || podman network create "${PODMAN_NETWORK}"
-
-podman pull docker.io/postgres:15-alpine
-podman pull docker.io/redis:7-alpine
-podman pull docker.io/weishaw/sub2api:latest
-
-for name in sub2api sub2api-postgres sub2api-redis; do
-  if podman container exists "${name}"; then
-    podman rm -f "${name}" || true
-  fi
-done
-
-podman run -d \
-  --name sub2api-postgres \
-  --network "${PODMAN_NETWORK}" \
-  -e POSTGRES_USER=sub2api \
-  -e POSTGRES_PASSWORD="${postgres_password}" \
+$PODMAN run -d --name sub2api-postgres --pod "$POD_NAME" \
   -e POSTGRES_DB=sub2api \
-  -v "${ROOT_DIR}/postgres:/var/lib/postgresql/data:Z" \
-  docker.io/postgres:15-alpine
+  -e POSTGRES_USER=sub2api \
+  -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+  -v "$SUB2API_ROOT/postgres:/var/lib/postgresql/data:Z" \
+  docker.io/library/postgres:16
 
-podman run -d \
-  --name sub2api-redis \
-  --network "${PODMAN_NETWORK}" \
-  -v "${ROOT_DIR}/redis:/data:Z" \
-  docker.io/redis:7-alpine \
-  redis-server --appendonly yes --requirepass "${redis_password}"
+$PODMAN run -d --name sub2api-redis --pod "$POD_NAME" \
+  -v "$SUB2API_ROOT/redis:/data:Z" \
+  docker.io/library/redis:7 redis-server --appendonly yes
 
 sleep 8
 
-podman run -d \
-  --name sub2api \
-  --network "${PODMAN_NETWORK}" \
-  -p "${SUB2API_PORT}:8080" \
-  -e TZ="${TZ_NAME}" \
-  -e SERVER_PORT=8080 \
-  -e DATABASE_HOST=sub2api-postgres \
-  -e DATABASE_PORT=5432 \
-  -e DATABASE_USER=sub2api \
-  -e DATABASE_PASSWORD="${postgres_password}" \
-  -e DATABASE_DBNAME=sub2api \
-  -e DATABASE_SSLMODE=disable \
-  -e REDIS_HOST=sub2api-redis \
-  -e REDIS_PORT=6379 \
-  -e REDIS_PASSWORD="${redis_password}" \
-  -e REDIS_ENABLE_TLS=false \
-  -e ADMIN_EMAIL="${SUB2API_ADMIN_EMAIL}" \
-  -e ADMIN_PASSWORD="${admin_password}" \
-  -e JWT_SECRET="${jwt_secret}" \
-  -e TOTP_ENCRYPTION_KEY="${totp_key}" \
-  -v "${ROOT_DIR}/app-data:/app/data:Z" \
-  docker.io/weishaw/sub2api:latest
-
-rm -f /etc/systemd/system/container-sub2api*.service
-cd /etc/systemd/system
-podman generate systemd --files --name sub2api-postgres
-podman generate systemd --files --name sub2api-redis
-podman generate systemd --files --name sub2api
-systemctl daemon-reload
-systemctl enable container-sub2api-postgres.service
-systemctl enable container-sub2api-redis.service
-systemctl enable container-sub2api.service
-
-cat > /root/sub2api_info.txt <<EOF
-SUB2API_URL=http://${PUBLIC_IP}:${SUB2API_PORT}
-SUB2API_LOCAL_URL=http://127.0.0.1:${SUB2API_PORT}
-SUB2API_ADMIN_EMAIL=${SUB2API_ADMIN_EMAIL}
-SUB2API_ADMIN_PASSWORD=${admin_password}
-SUB2API_JWT_SECRET=${jwt_secret}
-SUB2API_TOTP_ENCRYPTION_KEY=${totp_key}
-SUB2API_POSTGRES_PASSWORD=${postgres_password}
-SUB2API_REDIS_PASSWORD=${redis_password}
+cat > "$DATA_DIR/config.yaml" <<EOF
+server:
+  port: 8080
+  trusted_proxies: []
+database:
+  host: 127.0.0.1
+  port: 5432
+  user: sub2api
+  password: $POSTGRES_PASSWORD
+  dbname: sub2api
+redis:
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 0
+auth:
+  jwt_secret: $JWT_SECRET
+default:
+  user_balance: 0
+gateway:
+  openai_ws:
+    enabled: true
+    force_http: true
+    responses_websockets_v2: false
+    responses_websockets: false
 EOF
 
-echo "---"
-cat /root/sub2api_info.txt
+$PODMAN run -d --name sub2api --pod "$POD_NAME" \
+  -e SERVER_PORT=8080 \
+  -e ADMIN_EMAIL="$ADMIN_EMAIL" \
+  -e TZ=Asia/Shanghai \
+  -v "$DATA_DIR:/app/data:Z" \
+  docker.io/weishaw/sub2api:latest
+
+sleep 10
+$PODMAN exec sub2api-postgres psql -U sub2api -d sub2api -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;" || true
+$PODMAN ps --format "table {{.Names}}`t{{.Status}}`t{{.Ports}}"
+$PODMAN logs --tail 50 sub2api

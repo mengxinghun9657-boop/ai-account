@@ -1,435 +1,627 @@
-# AI 账号平台通用部署手册
+﻿# DEPLOYMENT
 
-这份文档面向“从零开始在一台 Linux 云服务器上完成整套环境部署”的场景，目标是让任何用户不依赖对话上下文，仅按步骤即可完成部署。
+本文档按从 0 到 1 的真实部署顺序编排。目标是：用户 clone 本仓库后，只需要准备自己的域名、Cloudflare 账号、Mihomo 配置和少量配置文件，就可以把整套服务部署起来。
 
-部署目标包含：
+## 1. 部署目标
+
+完成后将得到以下服务：
 
 - `mihomo`
+  - 作为全局代理和节点管理组件
 - `cloudflare_temp_email`
+  - 负责为注册流程生成自有域名邮箱并接收验证码邮件
 - `openai_pool_orchestrator-V6`
-- `CLIProxyAPI / CPA`
+  - 负责自动注册、获取 token、同步账号、管理 Mihomo 节点
 - `Sub2Api`
+  - 负责统一调度 OpenAI OAuth 账号，生成 API Key，对外提供 `/v1/models`、`/v1/responses`
+- `CLIProxyAPI`
+  - 作为 CPA/候选池管理端使用
 
-## 1. 准备工作
+部署完成后的典型入口：
 
-### 1.1 准备一台服务器
+- V6 面板：`http://服务器IP:18421`
+- Sub2Api：`http://服务器IP:8080`
+- CLIProxyAPI：`http://服务器IP:8317/management.html`
+- Mihomo Controller：`http://127.0.0.1:9090`
 
-最低建议：
+## 2. 仓库结构
 
-- `2C2G`
-- `20G+` 磁盘
-- Linux，支持 `systemd`
+- `apps/openai_pool_orchestrator-V6/`
+  - V6 完整源码
+- `apps/cloudflare_temp_email/`
+  - Cloudflare Temp Email 完整源码
+- `bin/mihomo-linux-amd64`
+  - Mihomo Linux 二进制
+- `configs/openai-pool/sync_config.example.json`
+  - V6 的同步配置模板
+- `configs/cloudflare-temp-email/worker.env.example`
+  - Cloudflare Temp Email Worker 环境变量模板
+- `configs/sub2api/env.example`
+  - Sub2Api 环境变量示例
+- `configs/cliproxyapi/config.example.yaml`
+  - CLIProxyAPI 配置模板
+- `scripts/deploy_mihomo.sh`
+  - Mihomo 安装脚本
+- `scripts/deploy_openai_pool.sh`
+  - V6 部署脚本
+- `scripts/deploy_sub2api.sh`
+  - Sub2Api 部署脚本
+- `scripts/deploy_cliproxyapi.sh`
+  - CLIProxyAPI 部署脚本
 
-推荐开放端口：
+## 3. 服务器要求
 
-- `22`：SSH
-- `18421`：V6 面板
-- `8080`：Sub2Api
-- `8317`：CLIProxyAPI / CPA
+推荐环境：
 
-说明：
+- 操作系统：`Rocky Linux 9` / `CentOS Stream 9` / `Ubuntu 22.04+`
+- CPU：`2C` 起步，推荐 `4C`
+- 内存：`2G` 起步，推荐 `4G`
+- 磁盘：`20G+`
+- 出网：服务器需要能访问 GitHub、PyPI、Docker/OCI 镜像仓库、Cloudflare、OpenAI 相关域名
 
-- `7890`、`9090` 只建议本机使用，不建议公网开放
-- 如果某个服务本机正常、公网打不开，先检查云安全组
+如果服务器位于中国大陆，建议尽早准备可用代理出口。
 
-### 1.2 准备域名与账号
+## 4. 部署前准备
 
-你需要准备：
+在开始之前，请准备以下内容：
 
-- 一个自己的域名，用于 Cloudflare 临时邮箱
-- 一个 Cloudflare 账号
-- 一个 GitHub 账号
-- 一个用于接收 Cloudflare 验证邮件的常用邮箱
+### 4.1 Cloudflare 相关
 
-### 1.3 准备本地文件
+- 一个已接入 Cloudflare 的域名，例如 `example.com`
+- Cloudflare 账户 ID
+- Cloudflare API Token
+  - 至少应具备 Workers、KV、Routes、Email Routing 相关权限
 
-你需要准备：
+### 4.2 Mihomo 相关
 
-- Windows 版 Clash / Mihomo 的实际配置
-- `Country.mmdb`
-- 如有 `GeoSite.dat` / `GeoIP.dat` 也一并准备
-- SSH 私钥
+- 你自己的 Mihomo 配置文件 `config.yaml`
+- Geo 数据文件（如果你的 Mihomo 配置需要）
+  - `Country.mmdb`
+  - `GeoSite.dat`
+  - `GeoIP.dat`
 
-注意：
+如果你已经在本地 Windows 使用 Clash/Mihomo：
 
-- `mihomo` 真实节点配置通常含敏感信息，不建议上传到公开仓库
-- 公开仓库仅放 `mihomo` 二进制
+1. 找到本地配置目录
+2. 导出当前可用的 `config.yaml`
+3. 导出所需 geo 数据文件
+4. 只要这些文件在服务器上放到 `/etc/mihomo/` 即可
 
-## 2. 安装系统基础依赖
+### 4.3 住宅代理（用于 Sub2Api）
 
-在服务器上安装这些工具：
+建议准备一条能稳定访问以下目标的代理：
 
-- `curl`
-- `wget`
-- `tar`
-- `git`
-- `python3`
-- `pip`
-- `screen` 或 `tmux`
+- `chatgpt.com`
+- `auth.openai.com`
+- `api.openai.com`
 
-如果你准备部署 `Sub2Api`，还需要：
+优先使用：
 
-- `podman`
+- `SOCKS5` 住宅代理
+- 或高质量住宅/家宽线路
 
-## 3. 部署 Mihomo
+### 4.4 本仓库
 
-### 3.1 上传文件
-
-把以下文件上传到服务器：
-
-- `mihomo` 二进制
-- 你自己的 `config.yaml`
-- `Country.mmdb`
-- 如有：`GeoSite.dat`、`GeoIP.dat`
-
-推荐路径：
-
-- 二进制：`/usr/local/bin/mihomo`
-- 配置目录：`/etc/mihomo`
-- 主配置：`/etc/mihomo/config.yaml`
-
-### 3.2 创建 systemd 服务
-
-服务文件参考：
-
-```ini
-[Unit]
-Description=Mihomo Service
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/mihomo -d /etc/mihomo -f /etc/mihomo/config.yaml
-Restart=always
-RestartSec=3
-LimitNOFILE=1048576
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### 3.3 启动并验证
-
-执行：
+将本仓库 clone 到服务器，例如：
 
 ```bash
-systemctl daemon-reload
-systemctl enable --now mihomo
-systemctl status mihomo
+git clone https://github.com/mengxinghun9657-boop/ai-account.git /opt/ai-account
+cd /opt/ai-account
 ```
 
-验证点：
+## 5. 服务器初始化
 
-- `127.0.0.1:7890` 监听正常
-- `127.0.0.1:9090` 监听正常
-- 通过 `curl --proxy http://127.0.0.1:7890 https://www.google.com` 可正常出海
+以 root 身份执行：
 
-## 4. 部署 Cloudflare Temp Email
+### 5.1 安装系统依赖
 
-### 4.1 域名接入 Cloudflare
-
-1. 把你的域名添加到 Cloudflare
-2. 在域名注册商控制台，把 NS 改成 Cloudflare 提供的 nameserver
-3. 等待域名状态从 `Pending` 变成 `Active`
-
-### 4.2 开启 Email Routing
-
-1. 在 Cloudflare 启用 `Email Routing`
-2. 添加 `Destination address`
-3. 去目标邮箱中完成验证
-4. 确认状态为 `Verified`
-
-### 4.3 部署 Worker
-
-推荐使用 `cloudflare_temp_email` 项目部署 Worker。
-
-部署后，你至少需要拿到：
-
-- Worker URL
-- Worker 管理密码
-- 绑定的邮箱域名
-
-参考模板见：
-
-- [configs/cloudflare-temp-email/worker.env.example](./configs/cloudflare-temp-email/worker.env.example)
-
-### 4.4 配置 Catch-All 到 Worker
-
-在 Cloudflare `Email Routing` 中：
-
-1. 进入 `Routing rules`
-2. 找到 `Catch-All`
-3. 设置为：
-   - `Send to a Worker`
-4. 目标 Worker 选择你部署好的 Worker
-
-### 4.5 验证收信
-
-先通过 Worker API 创建测试地址，再从外部邮箱发一封测试邮件到该地址。
-
-验证成功标准：
-
-- 邮件进入 Worker 存储
-- 不依赖 Gmail 转发
-- 后续 V6 可直接轮询验证码
-
-## 5. 部署 OpenAI Pool Orchestrator V6
-
-### 5.1 获取项目
-
-克隆 `AI-Account-Toolkit`，进入：
-
-```text
-openai_pool_orchestrator-V6
-```
-
-### 5.2 安装依赖
-
-创建虚拟环境并安装依赖。
-
-### 5.3 准备配置
-
-关键配置见：
-
-- [configs/openai-pool/sync_config.example.json](./configs/openai-pool/sync_config.example.json)
-
-你至少要填写：
-
-- `proxy`
-- `mihomo_controller`
-- `mail_provider`
-- `mail_provider_configs.cloudflare_temp_email`
-- `cpa_base_url`
-- `cpa_token`
-- `base_url`
-- `email`
-- `password`
-
-### 5.4 启动方式
-
-推荐使用 systemd 部署，服务名可命名为：
-
-```text
-openai-pool.service
-```
-
-### 5.5 验证
-
-打开：
-
-```text
-http://服务器IP:18421
-```
-
-确认：
-
-- 代理测试成功
-- 邮箱测试成功
-- Mihomo 节点可选择
-- 启动 / 停止按钮可用
-
-## 6. 部署 CLIProxyAPI / CPA
-
-### 6.1 配置模板
-
-见：
-
-- [configs/cliproxyapi/config.example.yaml](./configs/cliproxyapi/config.example.yaml)
-
-### 6.2 推荐部署方式
-
-使用仓库脚本：
-
-- [scripts/deploy_cliproxyapi.sh](./scripts/deploy_cliproxyapi.sh)
-
-最小执行方式：
+`Rocky Linux / CentOS Stream`：
 
 ```bash
-PUBLIC_IP=你的公网IP bash deploy_cliproxyapi.sh
+dnf update -y
+dnf install -y git curl wget tar unzip jq python3 python3-pip podman rsync ca-certificates
 ```
 
-脚本会自动：
-
-- 下载二进制
-- 生成 API Key
-- 生成管理密钥
-- 生成配置文件
-- 写入 systemd
-- 启动服务
-
-### 6.3 验证
-
-本机访问：
-
-```text
-http://127.0.0.1:8317
-```
-
-公网访问：
-
-```text
-http://服务器IP:8317/management.html
-```
-
-如公网异常，先检查安全组。
-
-## 7. 部署 Sub2Api
-
-### 7.1 配置模板
-
-见：
-
-- [configs/sub2api/env.example](./configs/sub2api/env.example)
-
-### 7.2 推荐部署方式
-
-使用仓库脚本：
-
-- [scripts/deploy_sub2api.sh](./scripts/deploy_sub2api.sh)
-
-最小执行方式：
+`Ubuntu / Debian`：
 
 ```bash
-PUBLIC_IP=你的公网IP \
-SUB2API_ADMIN_EMAIL=admin@example.com \
-bash deploy_sub2api.sh
+apt update
+apt install -y git curl wget tar unzip jq python3 python3-pip podman rsync ca-certificates
 ```
 
-脚本会自动：
+### 5.2 创建部署目录
 
-- 创建 `postgres`
-- 创建 `redis`
-- 创建 `sub2api`
-- 生成 systemd 单元
-- 写出管理员信息
+```bash
+mkdir -p /opt/ai-account
+```
 
-### 7.3 验证
+如果你不是通过 `git clone` 放到这个目录，请把整个仓库内容复制到 `/opt/ai-account`。
 
-打开：
+## 6. 部署 Mihomo
+
+### 6.1 放置配置文件
+
+把你的 Mihomo 配置放到：
+
+```bash
+/etc/mihomo/config.yaml
+```
+
+如果你的配置依赖 geo 文件，也一起放到：
+
+```bash
+/etc/mihomo/
+```
+
+例如：
+
+- `/etc/mihomo/Country.mmdb`
+- `/etc/mihomo/GeoIP.dat`
+- `/etc/mihomo/GeoSite.dat`
+
+### 6.2 执行部署脚本
+
+```bash
+cd /opt/ai-account
+bash scripts/deploy_mihomo.sh
+```
+
+### 6.3 验证 Mihomo
+
+```bash
+systemctl status mihomo --no-pager
+curl http://127.0.0.1:9090/version
+```
+
+如果你的配置中开启了 controller 和 secret，请记住：
+
+- controller 地址，例如 `http://127.0.0.1:9090`
+- secret
+
+V6 前端和后端会用到这两个值。
+
+## 7. 部署 Cloudflare Temp Email
+
+### 7.1 域名接入 Cloudflare
+
+假设使用的邮箱域名为 `mail.example.com` 或直接使用根域名 `example.com`。
+
+先完成：
+
+1. 将域名的 NS 切到 Cloudflare
+2. 等 Cloudflare 后台显示域名为 `Active`
+
+### 7.2 启用 Email Routing
+
+在 Cloudflare 后台完成：
+
+1. 进入 `Email -> Email Routing`
+2. 添加一个 `Destination address`
+   - 例如一个你能收邮件的 Gmail/QQ 邮箱
+3. 完成目标邮箱验证
+4. 确保域名已生成 MX 相关记录
+
+### 7.3 部署 Worker
+
+进入：
+
+```bash
+cd /opt/ai-account/apps/cloudflare_temp_email
+```
+
+将模板复制为自己的环境文件，例如：
+
+```bash
+cp /opt/ai-account/configs/cloudflare-temp-email/worker.env.example .env.local
+```
+
+按实际值填写：
+
+- `CLOUDFLARE_API_TOKEN`
+- `ADMIN_PASSWORD`
+- `DOMAIN`
+- `ACCOUNT_ID`
+
+然后根据项目内的 Worker 部署方式使用 `wrangler` 发布。
+
+典型步骤：
+
+```bash
+npm install
+npx wrangler login
+npx wrangler deploy
+```
+
+如果你使用 API Token 而不是 `wrangler login`，确保环境中有：
+
+```bash
+export CLOUDFLARE_API_TOKEN="你的token"
+```
+
+### 7.4 绑定 Email Worker 和 Catch-All
+
+在 Cloudflare 后台完成以下配置：
+
+1. `Email Routing -> Routing rules`
+2. 编辑 `Catch-All`
+3. 设置：
+   - `Action = Send to a Worker`
+   - `Destination = 你的 cloudflare_temp_email Worker`
+
+这样所有随机前缀邮箱，例如：
+
+- `tmpabc123@example.com`
+- `tmpxyz999@example.com`
+
+都能交给 Worker 处理。
+
+### 7.5 验证邮箱链路
+
+完成部署后，需要验证三件事：
+
+1. Worker API 正常
+2. 能创建随机邮箱地址
+3. 外部邮件能进入 Worker inbox
+
+## 8. 部署 Sub2Api
+
+### 8.1 执行部署脚本
+
+```bash
+cd /opt/ai-account
+bash scripts/deploy_sub2api.sh
+```
+
+脚本会提示输入：
+
+- 管理员邮箱
+- PostgreSQL 密码
+- JWT 密钥
+
+脚本会自动完成：
+
+- 创建 podman pod
+- 启动 `postgres`
+- 启动 `redis`
+- 启动 `sub2api`
+- 生成 `/opt/sub2api/app-data/config.yaml`
+- 初始化 `pgcrypto` 扩展
+
+### 8.2 验证服务
+
+```bash
+podman ps
+curl http://127.0.0.1:8080/healthz || true
+curl http://127.0.0.1:8080/
+```
+
+浏览器打开：
 
 ```text
 http://服务器IP:8080
 ```
 
-确认：
+完成初始化向导或登录。
 
-- 可访问登录页
-- 可使用管理员账号登录
+### 8.3 推荐的 OpenAI 网关配置
 
-## 8. 在 V6 中接入双平台
+本仓库默认脚本会把以下配置写入 `config.yaml`：
 
-### 8.1 接入 CPA
+```yaml
+gateway:
+  openai_ws:
+    enabled: true
+    force_http: true
+    responses_websockets_v2: false
+    responses_websockets: false
+```
 
-在 V6 中配置：
+这套配置更适合代理环境，尤其是住宅 SOCKS5 代理场景。
 
-- `cpa_base_url`
-- `cpa_token`
+### 8.4 在 Sub2Api 内添加代理
 
-### 8.2 接入 Sub2Api
+如果你计划让 Sub2Api 统一调度账号，建议在 Sub2Api 前端后台中：
 
-在 V6 中配置：
+1. 新增一条代理
+2. 协议选择 `socks5`
+3. 填写你的住宅代理地址、端口、用户名、密码
+
+后续账号测试和调度，应优先绑定到这条平台代理，而不是依赖容器级全局代理。
+
+## 9. 部署 CLIProxyAPI
+
+### 9.1 准备配置文件
+
+先复制模板：
+
+```bash
+mkdir -p /opt/cliproxyapi
+cp /opt/ai-account/configs/cliproxyapi/config.example.yaml /opt/cliproxyapi/config.yaml
+```
+
+按实际需求修改监听地址、日志等级、存储路径。
+
+### 9.2 执行部署脚本
+
+```bash
+cd /opt/ai-account
+bash scripts/deploy_cliproxyapi.sh
+```
+
+### 9.3 验证服务
+
+```bash
+systemctl status cliproxyapi --no-pager
+ss -ltnp | grep 8317
+```
+
+浏览器打开：
+
+```text
+http://服务器IP:8317/management.html
+```
+
+## 10. 部署 OpenAI Pool Orchestrator V6
+
+### 10.1 准备同步配置
+
+复制模板：
+
+```bash
+mkdir -p /opt/AI-Account-Toolkit/openai_pool_orchestrator-V6/data
+cp /opt/ai-account/configs/openai-pool/sync_config.example.json /opt/AI-Account-Toolkit/openai_pool_orchestrator-V6/data/sync_config.json
+```
+
+然后按你的实际环境修改：
 
 - `base_url`
+  - Sub2Api 地址，例如 `http://127.0.0.1:8080`
 - `email`
+  - Sub2Api 管理员邮箱
 - `password`
+  - Sub2Api 管理员密码
+- `cpa_base_url`
+  - CLIProxyAPI 地址，例如 `http://127.0.0.1:8317`
+- `proxy`
+  - Mihomo 的 HTTP 代理地址，例如 `http://127.0.0.1:7890`
+- `mihomo_controller`
+  - 例如 `http://127.0.0.1:9090`
+- `mihomo_secret`
+  - 如果你启用了 secret，就填写
+- `mail_provider`
+  - 一般使用 `cloudflare_temp_email`
+- `mail_provider_configs.cloudflare_temp_email`
+  - 填你的 Worker 地址、管理员密码、邮箱域名
 
-### 8.3 推荐同步策略
+如果你打算让新同步到 Sub2Api 的账号自动就绪，请保留这些字段：
 
-建议：
+```json
+"sub2api_proxy_id": 1,
+"sub2api_group_ids": [2],
+"sub2api_force_http": true,
+"sub2api_enable_tls_fingerprint": true,
+"sub2api_disable_oauth_ws_v2": true,
+"sub2api_disable_apikey_ws_v2": true
+```
 
-- `auto_sync = true`
-- `upload_mode = "decoupled"`
+### 10.2 执行部署脚本
 
-### 8.4 验证双平台同步
+```bash
+cd /opt/ai-account
+bash scripts/deploy_openai_pool.sh
+```
 
-发起一次注册后，确认：
+### 10.3 验证服务
 
-- 本地 token 文件已生成
-- `Sub2Api` 有新账号
-- `CPA` 有新候选账号
+```bash
+systemctl status openai-pool --no-pager
+ss -ltnp | grep 18421
+curl http://127.0.0.1:18421/api/status
+```
 
-## 9. token 维护策略
+浏览器打开：
 
-当前这套代码里：
+```text
+http://服务器IP:18421
+```
 
-- `access_token` 按约 `863999` 秒处理，约等于 `10 天`
-- 真正关键的是 `refresh_token`
+## 11. 初始化 V6 面板配置
 
-建议：
+在 V6 前端中依次完成：
 
-- 本地保留 token 文件
-- 开启异常账号刷新
-- 定期检查异常数
-- 失效号及时替换
+### 11.1 代理配置
 
-## 10. 域名风控后的处理
+- 填写 HTTP 代理：`http://127.0.0.1:7890`
+- 测试可用性
 
-如果当前邮箱域名后续被风控：
+### 11.2 Mihomo 配置
 
-1. 准备新的自有域名
-2. 重新接入 Cloudflare
-3. 重新部署 Email Routing + Worker
-4. 在 V6 中切换邮箱配置
+- Controller：`http://127.0.0.1:9090`
+- Secret：如果启用了则填写
+- 读取策略组
+- 选择适合注册的节点
 
-建议提前准备：
+### 11.3 邮箱配置
 
-- 主域名
-- 备用域名
+启用：
 
-## 11. 常见问题
+- `Cloudflare Temp Email`
 
-### 11.1 服务本机正常，公网打不开
+填写：
 
-优先检查：
+- Worker URL
+- Admin 密码
+- 分配域名
 
-- 云安全组
-- 公网端口放行
+测试连接时，应能创建随机邮箱地址，例如：
 
-### 11.2 Worker API 超时
+- `tmpxxxxx@example.com`
 
-优先检查：
+### 11.4 平台同步配置
 
-- 是否走 `mihomo`
-- V6 的 `proxy` 是否填成 `http://127.0.0.1:7890`
+配置：
 
-### 11.3 Cloudflare 显示邮件 Dropped
+- `Sub2Api`
+- `CLIProxyAPI`
 
-先确认：
+建议启用：
 
-- Catch-All 是否已经 `Send to a Worker`
-- 是否真的进入 Worker 存储，而不是误以为应该转发到 Gmail
+- `auto_sync`
+- 双平台同步
 
-### 11.4 V6 前端版本号显示混乱
+## 12. 验证 Cloudflare Temp Email 是否真正收信
 
-这是上游项目本身版本标识不统一，不代表启动错版本。
+建议做一次完整验证：
 
-## 12. 仓库内容说明
+1. 在 V6 中点“测试连接”，记下生成的邮箱地址
+2. 从外部邮箱发一封测试邮件到这个地址
+3. 确认 Worker 能收到邮件
+4. 再在注册流程里确认 OTP 能被自动提取
 
-### `bin/`
+## 13. 验证注册链路
 
-- 放 `mihomo` 二进制
-- 不放真实节点配置
+在 V6 中执行一次单轮注册，观察以下关键阶段：
 
-### `configs/`
+1. 网络检查通过
+2. 临时邮箱创建成功
+3. 注册表单提交成功
+4. 邮箱验证码发送成功
+5. OTP 能被成功读取
+6. OAuth / Codex token 成功获取
+7. 账号同步到 Sub2Api 与 CLIProxyAPI
 
-- 放脱敏后的配置模板
-- 所有敏感值都用占位符表示
+如果某一步失败，优先从以下几个方向排查：
 
-### `scripts/`
+- Mihomo 节点是否可用
+- 当前出口地区是否受限
+- Cloudflare Temp Email 是否真正收到邮件
+- 住宅代理是否适合 Sub2Api 调度
 
-- 放可复用部署脚本
-- 脚本内部通过环境变量替换公网 IP、管理员邮箱等
+## 14. 验证 Sub2Api API Key
 
----
+当账号已经进入 Sub2Api，并且账号组、代理、映射都配置完成后，可以使用 Sub2Api 生成的 API Key 进行本地测试。
 
-如果你要在新服务器上部署，直接按这个顺序走即可：
+### 14.1 测试模型列表
 
-1. 安装基础环境
+Windows PowerShell：
+
+```powershell
+curl.exe http://服务器IP:8080/v1/models -H "Authorization: Bearer 你的APIKey"
+```
+
+### 14.2 测试 responses
+
+PowerShell：
+
+```powershell
+$headers = @{
+  Authorization = "Bearer 你的APIKey"
+  "Content-Type" = "application/json"
+}
+
+$body = @{
+  model = "gpt-5.1-codex"
+  input = "hi"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://服务器IP:8080/v1/responses" -Method Post -Headers $headers -Body $body
+```
+
+返回 `status = completed` 即说明链路可用。
+
+## 15. 将 API Key 用于 Codex CLI
+
+如果你打算把 Sub2Api 作为 Codex CLI 的统一入口，可以在本地配置：
+
+### 15.1 `config.toml`
+
+Windows：
+
+```toml
+model_provider = "OpenAI"
+model = "gpt-5.4"
+review_model = "gpt-5.4"
+model_reasoning_effort = "xhigh"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
+
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "http://服务器IP:8080"
+wire_api = "responses"
+supports_websockets = true
+requires_openai_auth = true
+
+[features]
+responses_websockets_v2 = true
+```
+
+### 15.2 `auth.json`
+
+```json
+{
+  "OPENAI_API_KEY": "你的Sub2Api API Key"
+}
+```
+
+## 16. 常见验证命令
+
+### 16.1 Mihomo
+
+```bash
+systemctl status mihomo --no-pager
+curl http://127.0.0.1:9090/version
+```
+
+### 16.2 V6
+
+```bash
+systemctl status openai-pool --no-pager
+curl http://127.0.0.1:18421/api/status
+```
+
+### 16.3 CLIProxyAPI
+
+```bash
+systemctl status cliproxyapi --no-pager
+curl http://127.0.0.1:8317/
+```
+
+### 16.4 Sub2Api
+
+```bash
+podman ps
+podman logs --tail 100 sub2api
+curl http://127.0.0.1:8080/v1/models -H "Authorization: Bearer 你的APIKey"
+```
+
+## 17. 推荐的部署顺序总结
+
+按下面顺序做，最稳：
+
+1. 安装系统依赖
 2. 部署 Mihomo
-3. 部署 Cloudflare Temp Email
-4. 部署 V6
-5. 部署 CPA
+3. 接入 Cloudflare 域名
+4. 部署 Cloudflare Temp Email Worker
+5. 启用 Email Routing 和 Catch-All -> Worker
 6. 部署 Sub2Api
-7. 配置双平台同步
-8. 做一次完整联调
+7. 在 Sub2Api 中新增平台代理
+8. 部署 CLIProxyAPI
+9. 部署 V6
+10. 在 V6 中填写同步配置和邮箱配置
+11. 做单轮注册验证
+12. 做 Sub2Api API Key 本地验证
+13. 再开始批量化运行
+
+## 18. 上线后建议
+
+建议把以下内容纳入你的日常维护：
+
+- 定期检查 Mihomo 节点质量
+- 定期验证 Cloudflare Temp Email 是否仍能收信
+- 定期验证 Sub2Api 的 API Key 调度是否可用
+- 关注注册成功率、OTP 成功率、代理地区和风控情况
+- 观察 V6 日志中的 `invalid_state`、`401`、`timeout`、`registration_disallowed` 等关键信号
