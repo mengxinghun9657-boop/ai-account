@@ -745,6 +745,8 @@ class TaskState:
             "account_email": "",
             "current_step": "",
             "message": "",
+            "failure_code": "",
+            "retry_strategy": "",
             "updated_at": self._now_iso(),
             "steps": [],
         }
@@ -1011,6 +1013,14 @@ class TaskState:
         if message:
             runtime["message"] = message
 
+        failure_code = str(event.get("failure_code") or "").strip().lower()
+        if failure_code:
+            runtime["failure_code"] = failure_code
+
+        retry_strategy = str(event.get("retry_strategy") or "").strip().lower()
+        if retry_strategy:
+            runtime["retry_strategy"] = retry_strategy
+
         step = str(event.get("step") or "").strip().lower()
         level = str(event.get("level") or "info").strip().lower()
         step_patch = None
@@ -1021,6 +1031,8 @@ class TaskState:
             step_patch = self._upsert_worker_step_locked(runtime, step_id=step, level=level, message=message, updated_at=updated_at)
             if step == "start":
                 runtime["steps"] = [step_patch]
+                runtime["failure_code"] = ""
+                runtime["retry_strategy"] = ""
             if step in {"stopped", "auto_stop"}:
                 runtime["status"] = "stopped"
             elif step == "runtime" or (level == "error" and step not in {"retry", "wait"}):
@@ -1528,6 +1540,8 @@ class TaskState:
                     step="start",
                     attempt=count,
                 )
+                failure_code = ""
+                retry_strategy = ""
                 try:
                     token_json = run(
                         proxy=proxy or None,
@@ -1667,15 +1681,21 @@ class TaskState:
                             }
                             if "cpa" in required_platforms:
                                 _enqueue_upload_job("cpa", base_job, prefix)
-                            if "sub2api" in required_platforms:
-                                _enqueue_upload_job("sub2api", base_job, prefix)
+                                if "sub2api" in required_platforms:
+                                    _enqueue_upload_job("sub2api", base_job, prefix)
                     else:
+                        last_event = attempt_emitter.last_event()
+                        failure_code = str(last_event.get("failure_code") or "").strip().lower()
+                        retry_strategy = str(last_event.get("retry_strategy") or "").strip().lower()
                         consecutive_failures += 1
                         mail_router.report_failure(provider_name)
                         with self._task_lock:
                             self.fail_count += 1
                             self.run_fail_count += 1
-                            self.last_error = f"注册失败: worker={worker_id}"
+                            if failure_code == "registration_disallowed":
+                                self.last_error = f"注册失败: worker={worker_id} registration_disallowed"
+                            else:
+                                self.last_error = f"注册失败: worker={worker_id}"
                             _save_state(self.success_count, self.fail_count)
                             self.status = "running"
                         attempt_emitter.error(f"{prefix}本次注册失败，稍后重试...", step="retry")
@@ -1693,13 +1713,14 @@ class TaskState:
                 if self.stop_event.is_set():
                     break
 
-                if consecutive_failures >= 2:
+                should_rotate = consecutive_failures >= 2 or retry_strategy == "rotate_and_cooldown"
+                if should_rotate:
                     rotated = _rotate_mihomo_node()
                     if rotated.get("ok"):
                         attempt_emitter.warn(
-                            "{}连续失败 {} 次，已切换 Mihomo 节点: {} -> {}".format(
+                            "{}{}，已切换 Mihomo 节点: {} -> {}".format(
                                 prefix,
-                                consecutive_failures,
+                                "检测到 registration_disallowed，执行强制冷却与换节点" if retry_strategy == "rotate_and_cooldown" else f"连续失败 {consecutive_failures} 次",
                                 rotated.get("selector", "?"),
                                 rotated.get("node", "?"),
                             ),
@@ -1707,15 +1728,21 @@ class TaskState:
                         )
                     else:
                         attempt_emitter.warn(
-                            "{}连续失败 {} 次，但切换 Mihomo 节点失败: {}".format(
+                            "{}{}，但切换 Mihomo 节点失败: {}".format(
                                 prefix,
-                                consecutive_failures,
+                                "检测到 registration_disallowed，尝试换节点未成功" if retry_strategy == "rotate_and_cooldown" else f"连续失败 {consecutive_failures} 次",
                                 rotated.get("error", "unknown error"),
                             ),
                             step="check_proxy",
                         )
 
-                if consecutive_failures <= 0:
+                if retry_strategy == "rotate_and_cooldown" or failure_code == "registration_disallowed":
+                    wait = random.randint(300, 540)
+                    attempt_emitter.warn(
+                        f"{prefix}上游风控拒绝建号，延长冷却 {wait} 秒后再试...",
+                        step="wait",
+                    )
+                elif consecutive_failures <= 0:
                     wait = random.randint(8, 20)
                 elif consecutive_failures == 1:
                     wait = random.randint(45, 90)

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * OpenAI Pool Orchestrator — v5.2.1
  */
 
@@ -1001,14 +1001,10 @@ function syncTaskChrome() {
   DOM.statusBadge.className = `status-badge ${status}`;
   DOM.statusText.textContent = formatTaskStatusLabel(status);
 
-  const activeWorkerExists = (state.runtime.workers || []).some(worker => {
-    const workerStatus = String(worker?.status || 'idle');
-    return !['idle', 'stopped', 'succeeded', 'failed'].includes(workerStatus);
-  });
-  const hasLiveRun = (Boolean(state.task.run_id) && !state.task.finished_at) || activeWorkerExists;
-  const isActive = ['starting', 'running'].includes(status) || activeWorkerExists;
+  const hasLiveRun = Boolean(state.task.run_id) && !state.task.finished_at;
+  const isActive = ['starting', 'running'].includes(status);
   const isStopping = status === 'stopping';
-  const canStop = hasLiveRun && (['starting', 'running', 'failed', 'finished'].includes(status) || activeWorkerExists);
+  const canStop = hasLiveRun && ['starting', 'running', 'failed'].includes(status);
   DOM.btnStart.disabled = hasLiveRun || isStopping;
   DOM.btnStop.disabled = !canStop;
   DOM.progressFill.className = isActive

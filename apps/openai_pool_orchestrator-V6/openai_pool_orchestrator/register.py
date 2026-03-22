@@ -47,6 +47,7 @@ class EventEmitter:
         self._q = q
         self._cli_mode = cli_mode
         self._defaults = dict(defaults or {})
+        self._last_event: Dict[str, Any] = {}
 
     def emit(self, level: str, message: str, step: str = "", **extra: Any) -> None:
         """
@@ -64,6 +65,7 @@ class EventEmitter:
             event.update(self._defaults)
         if extra:
             event.update({k: v for k, v in extra.items() if v is not None})
+        self._last_event = dict(event)
         if self._cli_mode:
             prefix_map = {
                 "info": "[*]",
@@ -83,6 +85,9 @@ class EventEmitter:
         merged = dict(self._defaults)
         merged.update({k: v for k, v in defaults.items() if v is not None})
         return EventEmitter(q=self._q, cli_mode=self._cli_mode, defaults=merged)
+
+    def last_event(self) -> Dict[str, Any]:
+        return dict(self._last_event)
 
     def info(self, msg: str, step: str = "", **extra: Any) -> None:
         self.emit("info", msg, step, **extra)
@@ -1588,7 +1593,16 @@ def run(
         emitter.info(f"账户创建状态: {create_account_status}", step="create_account")
 
         if create_account_status != 200:
-            emitter.error(create_account_resp.text, step="create_account")
+            create_account_text = str(create_account_resp.text or "")
+            if "registration_disallowed" in create_account_text:
+                emitter.error(
+                    create_account_text,
+                    step="create_account",
+                    failure_code="registration_disallowed",
+                    retry_strategy="rotate_and_cooldown",
+                )
+            else:
+                emitter.error(create_account_text, step="create_account")
             return None
 
         emitter.success("账户创建成功！", step="create_account")
