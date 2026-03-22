@@ -1,0 +1,33 @@
+{
+  "proxy": "http://127.0.0.1:7890",
+  "mihomo_controller": "http://127.0.0.1:9090",
+  "mihomo_secret": "replace-with-your-mihomo-secret",
+  "mail_provider": "cloudflare_temp_email",
+  "mail_provider_configs": {
+    "cloudflare_temp_email": {
+      "api_base": "https://your-worker.your-subdomain.workers.dev",
+      "admin_password": "replace-with-worker-admin-password",
+      "domain": "example.com"
+    }
+  },
+  "cpa_base_url": "http://127.0.0.1:8317",
+  "cpa_token": "replace-with-cpa-management-token",
+  "base_url": "http://127.0.0.1:8080",
+  "email": "admin@example.com",
+  "password": "replace-with-sub2api-password",
+  "auto_sync": true,
+  "upload_mode": "decoupled",
+  "min_candidates": 15,
+  "sub2api_min_candidates": 200,
+  "auto_maintain": false,
+  "sub2api_auto_maintain": false,
+  "sub2api_maintain_interval_minutes": 30,
+  "sub2api_maintain_actions": {
+    "refresh_abnormal_accounts": true,
+    "delete_abnormal_accounts": true,
+    "dedupe_duplicate_accounts": true
+  },
+  "multithread": false,
+  "thread_count": 1,
+  "auto_register": false
+}
